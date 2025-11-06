@@ -1,10 +1,7 @@
-// Cloudflare Pages Function - Domain IP & GeoIP Lookup API (IPv4 + IPv6 SUPPORTED)
-// Endpoint: /resolve?domain=example.com
+// Cloudflare Pages Function - Get User IP API (IPv4 Priority)
+// Endpoint: /ip
 
 export async function onRequestGet({ request }) {
-  const url = new URL(request.url);
-  const domain = url.searchParams.get('domain');
-  
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -12,173 +9,221 @@ export async function onRequestGet({ request }) {
     'Content-Type': 'application/json'
   };
 
-  if (!domain) {
-    return new Response(JSON.stringify({
-      error: 'Missing domain parameter',
-      message: 'Vui lòng cung cấp ?domain=example.com'
-    }), { status: 400, headers: corsHeaders });
-  }
-
-  const cleanDomain = domain
-    .replace(/^https?:\/\//, '')
-    .replace(/\/$/, '')
-    .split('/')[0];
-
-  const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?(\.[a-zA-Z]{2,})+$/;
-  if (!domainRegex.test(cleanDomain)) {
-    return new Response(JSON.stringify({
-      error: 'Invalid domain',
-      message: 'Domain không hợp lệ',
-      domain: cleanDomain
-    }), { status: 400, headers: corsHeaders });
-  }
-
   try {
-    // Step 1: Resolve domain to IP (IPv4 + IPv6)
-    const [dnsA, dnsAAAA] = await Promise.all([
-      fetch(`https://dns.google/resolve?name=${cleanDomain}&type=A`, {
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(5000)
-      }).then(r => r.json()).catch(() => ({})),
-      fetch(`https://dns.google/resolve?name=${cleanDomain}&type=AAAA`, {
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(5000)
-      }).then(r => r.json()).catch(() => ({}))
-    ]);
+    // Get IP from Cloudflare headers
+    const cfIP = request.headers.get('cf-connecting-ip') || 
+                 request.headers.get('x-forwarded-for') || 
+                 request.headers.get('x-real-ip') || 
+                 'Unknown';
 
-    // lấy IPv4 trước, nếu không có thì dùng IPv6
-    const ipRecord = dnsA.Answer?.find(r => r.type === 1) || dnsAAAA.Answer?.find(r => r.type === 28);
-    if (!ipRecord) {
-      return new Response(JSON.stringify({
-        error: 'No valid IP found',
-        message: 'Không tìm thấy địa chỉ IPv4 hoặc IPv6',
-        domain: cleanDomain
-      }), { status: 404, headers: corsHeaders });
+    // Detect if IPv6
+    const isIPv6 = cfIP.includes(':');
+    
+    // Get Cloudflare country code
+    const country = request.headers.get('cf-ipcountry') || 'Unknown';
+    
+    // Get user agent
+    const userAgent = request.headers.get('user-agent') || 'Unknown';
+
+    // Try to get IPv4 if current IP is IPv6
+    let ipv4 = null;
+    let ipv6 = null;
+    let primaryIP = cfIP;
+
+    if (isIPv6) {
+      ipv6 = cfIP;
+      
+      // Try to get IPv4 by making a request to a service that returns IPv4
+      try {
+        const ipv4Response = await fetch('https://api.ipify.org?format=json', {
+          signal: AbortSignal.timeout(3000)
+        });
+        if (ipv4Response.ok) {
+          const ipv4Data = await ipv4Response.json();
+          ipv4 = ipv4Data.ip;
+          primaryIP = ipv4; // Use IPv4 as primary for better GeoIP data
+        }
+      } catch (err) {
+        console.log('Could not fetch IPv4:', err.message);
+      }
+    } else {
+      ipv4 = cfIP;
+      primaryIP = ipv4;
     }
 
-    const ip = ipRecord.data;
-    const version = ip.includes(':') ? 'IPv6' : 'IPv4';
-
-    // Step 2: Try multiple GeoIP APIs with fallback
-
-    // API 1: ip-api.com
+    // Try to get detailed GeoIP info using PRIMARY IP (prefer IPv4)
     try {
+      // Use ip-api.com - better support for both IPv4 and IPv6
       const geoResponse = await fetch(
-        `http://ip-api.com/json/${ip}?fields=status,country,countryCode,region,regionName,city,zip,timezone,isp,org,as,query`,
-        { signal: AbortSignal.timeout(5000) }
+        `http://ip-api.com/json/${primaryIP}?fields=status,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
+        {
+          signal: AbortSignal.timeout(5000)
+        }
       );
 
       if (geoResponse.ok) {
         const geoData = await geoResponse.json();
+        
         if (geoData.status === 'success') {
-          return new Response(JSON.stringify({
-            domain: cleanDomain,
-            ip: ip,
-            version: version,
-            country: geoData.country || 'Unknown',
-            countryCode: geoData.countryCode || null,
-            region: geoData.regionName || geoData.region || 'Unknown',
-            city: geoData.city || 'Unknown',
-            postal: geoData.zip || null,
-            timezone: geoData.timezone || null,
-            isp: geoData.isp || 'Unknown',
-            org: geoData.org || geoData.as || null,
-            asn: geoData.as || null,
-            timestamp: new Date().toISOString(),
-            source: 'ip-api.com'
-          }), { status: 200, headers: corsHeaders });
+          return new Response(
+            JSON.stringify({
+              ip: primaryIP,
+              ipv4: ipv4,
+              ipv6: ipv6,
+              type: isIPv6 ? 'IPv6' : 'IPv4',
+              country: geoData.country || country,
+              countryCode: geoData.countryCode || country,
+              city: geoData.city || null,
+              region: geoData.regionName || geoData.region || null,
+              postal: geoData.zip || null,
+              timezone: geoData.timezone || null,
+              latitude: geoData.lat || null,
+              longitude: geoData.lon || null,
+              org: geoData.org || geoData.as || null,
+              isp: geoData.isp || null,
+              userAgent: userAgent,
+              timestamp: new Date().toISOString(),
+              source: 'ip-api.com'
+            }),
+            { 
+              status: 200,
+              headers: corsHeaders
+            }
+          );
         }
       }
-    } catch (err) {
-      console.log('ip-api.com failed:', err.message);
+    } catch (geoError) {
+      console.error('ip-api.com failed:', geoError);
     }
 
-    // API 2: ipwho.is
+    // Fallback: Try ipwho.is
     try {
-      const whoResponse = await fetch(`https://ipwho.is/${ip}`, { signal: AbortSignal.timeout(5000) });
+      const whoResponse = await fetch(
+        `https://ipwho.is/${primaryIP}`,
+        {
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+
       if (whoResponse.ok) {
         const whoData = await whoResponse.json();
+        
         if (whoData.success) {
-          return new Response(JSON.stringify({
-            domain: cleanDomain,
-            ip: ip,
-            version: version,
-            country: whoData.country || 'Unknown',
-            countryCode: whoData.country_code || null,
-            region: whoData.region || 'Unknown',
-            city: whoData.city || 'Unknown',
-            postal: whoData.postal || null,
-            timezone: whoData.timezone?.id || null,
-            isp: whoData.connection?.isp || 'Unknown',
-            org: whoData.connection?.org || null,
-            asn: whoData.connection?.asn || null,
-            latitude: whoData.latitude || null,
-            longitude: whoData.longitude || null,
-            timestamp: new Date().toISOString(),
-            source: 'ipwho.is'
-          }), { status: 200, headers: corsHeaders });
+          return new Response(
+            JSON.stringify({
+              ip: primaryIP,
+              ipv4: ipv4,
+              ipv6: ipv6,
+              type: isIPv6 ? 'IPv6' : 'IPv4',
+              country: whoData.country || country,
+              countryCode: whoData.country_code || country,
+              city: whoData.city || null,
+              region: whoData.region || null,
+              postal: whoData.postal || null,
+              timezone: whoData.timezone?.id || null,
+              latitude: whoData.latitude || null,
+              longitude: whoData.longitude || null,
+              org: whoData.connection?.org || null,
+              isp: whoData.connection?.isp || null,
+              userAgent: userAgent,
+              timestamp: new Date().toISOString(),
+              source: 'ipwho.is'
+            }),
+            { 
+              status: 200,
+              headers: corsHeaders
+            }
+          );
         }
       }
-    } catch (err) {
-      console.log('ipwho.is failed:', err.message);
+    } catch (whoError) {
+      console.error('ipwho.is failed:', whoError);
     }
 
-    // API 3: ipapi.co
+    // Last fallback: Try ipapi.co
     try {
-      const ipapiResponse = await fetch(`https://ipapi.co/${ip}/json/`, {
-        headers: { 'User-Agent': 'CheckTools/1.0' },
-        signal: AbortSignal.timeout(5000)
-      });
+      const ipapiResponse = await fetch(
+        `https://ipapi.co/${primaryIP}/json/`,
+        {
+          headers: { 'User-Agent': 'CheckTools/1.0' },
+          signal: AbortSignal.timeout(5000)
+        }
+      );
 
       if (ipapiResponse.ok) {
         const ipapiData = await ipapiResponse.json();
+        
         if (!ipapiData.error) {
-          return new Response(JSON.stringify({
-            domain: cleanDomain,
-            ip: ip,
-            version: version,
-            country: ipapiData.country_name || 'Unknown',
-            countryCode: ipapiData.country_code || null,
-            region: ipapiData.region || 'Unknown',
-            city: ipapiData.city || 'Unknown',
-            postal: ipapiData.postal || null,
-            timezone: ipapiData.timezone || null,
-            isp: ipapiData.org || 'Unknown',
-            org: ipapiData.org || null,
-            asn: ipapiData.asn || null,
-            latitude: ipapiData.latitude || null,
-            longitude: ipapiData.longitude || null,
-            timestamp: new Date().toISOString(),
-            source: 'ipapi.co'
-          }), { status: 200, headers: corsHeaders });
+          return new Response(
+            JSON.stringify({
+              ip: primaryIP,
+              ipv4: ipv4,
+              ipv6: ipv6,
+              type: isIPv6 ? 'IPv6' : 'IPv4',
+              country: ipapiData.country_name || country,
+              countryCode: ipapiData.country_code || country,
+              city: ipapiData.city || null,
+              region: ipapiData.region || null,
+              postal: ipapiData.postal || null,
+              timezone: ipapiData.timezone || null,
+              latitude: ipapiData.latitude || null,
+              longitude: ipapiData.longitude || null,
+              org: ipapiData.org || null,
+              isp: ipapiData.org || null,
+              userAgent: userAgent,
+              timestamp: new Date().toISOString(),
+              source: 'ipapi.co'
+            }),
+            { 
+              status: 200,
+              headers: corsHeaders
+            }
+          );
         }
       }
-    } catch (err) {
-      console.log('ipapi.co failed:', err.message);
+    } catch (ipapiError) {
+      console.error('ipapi.co failed:', ipapiError);
     }
 
-    // Fallback
-    return new Response(JSON.stringify({
-      domain: cleanDomain,
-      ip: ip,
-      version: version,
-      country: 'Unknown',
-      region: 'Unknown',
-      city: 'Unknown',
-      isp: 'Unknown',
-      message: 'Tất cả GeoIP APIs đều thất bại',
-      timestamp: new Date().toISOString()
-    }), { status: 200, headers: corsHeaders });
+    // If all GeoIP APIs fail, return basic Cloudflare data
+    return new Response(
+      JSON.stringify({
+        ip: primaryIP,
+        ipv4: ipv4,
+        ipv6: ipv6,
+        type: isIPv6 ? 'IPv6' : 'IPv4',
+        country: country,
+        countryCode: country,
+        city: request.headers.get('cf-ipcity') || null,
+        region: request.headers.get('cf-region') || null,
+        timezone: request.headers.get('cf-timezone') || null,
+        postal: request.headers.get('cf-postal-code') || null,
+        userAgent: userAgent,
+        timestamp: new Date().toISOString(),
+        source: 'cloudflare-headers',
+        note: 'Using basic Cloudflare data (GeoIP APIs failed)'
+      }),
+      { 
+        status: 200,
+        headers: corsHeaders
+      }
+    );
 
   } catch (err) {
-    return new Response(JSON.stringify({
-      error: err.message,
-      message: 'Không thể tra cứu domain',
-      domain: domain
-    }), { status: 500, headers: corsHeaders });
+    return new Response(
+      JSON.stringify({ 
+        error: err.message,
+        message: 'Không thể lấy thông tin IP'
+      }),
+      { 
+        status: 500,
+        headers: corsHeaders
+      }
+    );
   }
 }
 
+// Handle OPTIONS for CORS
 export async function onRequestOptions() {
   return new Response(null, {
     headers: {
