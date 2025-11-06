@@ -10,26 +10,46 @@
 <body>
   <div class="container">
     
+    <!-- Back Button -->
     <a href="index.html" class="back-btn">← Quay lại</a>
 
+    <!-- Header -->
     <header class="tool-header">
       <div class="tool-icon">📡</div>
       <h1>IP của bạn</h1>
       <p>Xem địa chỉ IP công khai và thông tin thiết bị</p>
     </header>
 
+    <!-- Loading -->
     <div id="loadingBox" class="loading-box">
       <div class="spinner"></div>
       <p>Đang lấy thông tin IP...</p>
     </div>
 
+    <!-- Result Section -->
     <div id="resultSection" class="ip-result-box hidden">
+      
+      <!-- IP Display -->
       <div class="ip-display">
         <div class="ip-label">Địa chỉ IP của bạn</div>
         <div id="ipAddress" class="ip-value">-</div>
+        <div id="ipType" class="ip-type-badge">-</div>
         <button id="copyBtn" class="btn-copy" onclick="copyIP()">📋 Sao chép</button>
       </div>
 
+      <!-- Both IPs (if available) -->
+      <div id="bothIPs" class="both-ips hidden">
+        <div class="ip-row">
+          <span class="ip-label-small">IPv4:</span>
+          <span id="ipv4Address" class="ip-value-small">-</span>
+        </div>
+        <div class="ip-row">
+          <span class="ip-label-small">IPv6:</span>
+          <span id="ipv6Address" class="ip-value-small">-</span>
+        </div>
+      </div>
+
+      <!-- Info Grid -->
       <div class="info-grid">
         <div class="info-item">
           <div class="info-icon">🌍</div>
@@ -43,7 +63,7 @@
           <div class="info-icon">📍</div>
           <div>
             <div class="info-label">Vị trí</div>
-            <div id="locationInfo" class="info-value">-</div>
+            <div id="location" class="info-value">-</div>
           </div>
         </div>
 
@@ -63,13 +83,15 @@
           </div>
         </div>
       </div>
+
     </div>
 
+    <!-- Error Section -->
     <div id="errorSection" class="error-box hidden">
       <div class="error-icon">⚠️</div>
       <h3>Không thể lấy thông tin IP</h3>
       <p id="errorMessage"></p>
-      <button onclick="window.location.reload()" class="btn-primary">Thử lại</button>
+      <button onclick="location.reload()" class="btn-primary">Thử lại</button>
     </div>
 
   </div>
@@ -80,8 +102,12 @@
     const resultSection = document.getElementById('resultSection');
     const errorSection = document.getElementById('errorSection');
     const ipAddress = document.getElementById('ipAddress');
+    const ipType = document.getElementById('ipType');
+    const bothIPs = document.getElementById('bothIPs');
+    const ipv4Address = document.getElementById('ipv4Address');
+    const ipv6Address = document.getElementById('ipv6Address');
     const country = document.getElementById('country');
-    const locationInfo = document.getElementById('locationInfo');
+    const location = document.getElementById('location');
     const isp = document.getElementById('isp');
     const device = document.getElementById('device');
     const errorMessage = document.getElementById('errorMessage');
@@ -89,14 +115,6 @@
     async function getMyIP() {
       try {
         const response = await fetch('/ip');
-        
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          const text = await response.text();
-          console.error('Received non-JSON:', text.substring(0, 200));
-          throw new Error('Functions chưa được deploy. Vui lòng deploy bằng Wrangler CLI.');
-        }
-        
         const data = await response.json();
         
         if (data.error) {
@@ -105,7 +123,6 @@
 
         displayResult(data);
       } catch (error) {
-        console.error('Error:', error);
         showError(error.message);
       }
     }
@@ -114,10 +131,32 @@
       loadingBox.classList.add('hidden');
       resultSection.classList.remove('hidden');
 
+      // Main IP display
       ipAddress.textContent = data.ip || 'Không xác định';
+      
+      // IP Type badge
+      if (data.type) {
+        ipType.textContent = data.type;
+        ipType.className = 'ip-type-badge ' + (data.type === 'IPv4' ? 'ipv4' : 'ipv6');
+      }
+
+      // Show both IPs if available
+      if (data.ipv4 && data.ipv6) {
+        bothIPs.classList.remove('hidden');
+        ipv4Address.textContent = data.ipv4;
+        ipv6Address.textContent = data.ipv6;
+      } else if (data.ipv4 || data.ipv6) {
+        // Show only the one that's available
+        if (data.ipv4 && !data.ipv6) {
+          bothIPs.classList.add('hidden');
+        } else if (data.ipv6 && !data.ipv4) {
+          bothIPs.classList.add('hidden');
+        }
+      }
+
       country.textContent = getCountryName(data.countryCode || data.country) || 'Không xác định';
-      locationInfo.textContent = formatLocation(data) || 'Không xác định';
-      isp.textContent = data.org || data.isp || 'Không xác định';
+      location.textContent = formatLocation(data) || 'Không xác định';
+      isp.textContent = data.isp || data.org || 'Không xác định';
       device.textContent = getDeviceInfo(data.userAgent) || 'Không xác định';
     }
 
@@ -137,8 +176,12 @@
         'CN': '🇨🇳 China',
         'SG': '🇸🇬 Singapore',
         'TH': '🇹🇭 Thailand',
+        'FR': '🇫🇷 France',
+        'DE': '🇩🇪 Germany',
+        'AU': '🇦🇺 Australia',
+        'CA': '🇨🇦 Canada',
       };
-      return countries[code] || code;
+      return countries[code] || (code === 'Unknown' ? code : `${code}`);
     }
 
     function formatLocation(data) {
@@ -176,7 +219,59 @@
       });
     }
 
+    // Auto load on page load
     getMyIP();
   </script>
+
+  <style>
+    .ip-type-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-top: 0.5rem;
+    }
+
+    .ip-type-badge.ipv4 {
+      background: #10b981;
+      color: white;
+    }
+
+    .ip-type-badge.ipv6 {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .both-ips {
+      background: var(--bg-dark);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin: 1rem 0;
+    }
+
+    .ip-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ip-row:last-child {
+      border-bottom: none;
+    }
+
+    .ip-label-small {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .ip-value-small {
+      color: var(--text-primary);
+      font-family: 'Courier New', monospace;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+  </style>
 </body>
 </html>
