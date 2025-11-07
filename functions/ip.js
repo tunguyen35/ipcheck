@@ -1,4 +1,4 @@
-// Cloudflare Pages Function - Get User IP API (IPv4 Priority)
+// Cloudflare Pages Function - Get User IP API (SIMPLIFIED)
 // Endpoint: /ip
 
 export async function onRequestGet({ request }) {
@@ -11,13 +11,14 @@ export async function onRequestGet({ request }) {
 
   try {
     // Get IP from Cloudflare headers
-    const cfIP = request.headers.get('cf-connecting-ip') || 
-                 request.headers.get('x-forwarded-for') || 
-                 request.headers.get('x-real-ip') || 
-                 'Unknown';
+    const ip = request.headers.get('cf-connecting-ip') || 
+               request.headers.get('x-forwarded-for') || 
+               request.headers.get('x-real-ip') || 
+               'Unknown';
 
-    // Detect if IPv6
-    const isIPv6 = cfIP.includes(':');
+    // Detect IP type
+    const isIPv6 = ip.includes(':');
+    const ipType = isIPv6 ? 'IPv6' : 'IPv4';
     
     // Get Cloudflare country code
     const country = request.headers.get('cf-ipcountry') || 'Unknown';
@@ -25,37 +26,10 @@ export async function onRequestGet({ request }) {
     // Get user agent
     const userAgent = request.headers.get('user-agent') || 'Unknown';
 
-    // Try to get IPv4 if current IP is IPv6
-    let ipv4 = null;
-    let ipv6 = null;
-    let primaryIP = cfIP;
-
-    if (isIPv6) {
-      ipv6 = cfIP;
-      
-      // Try to get IPv4 by making a request to a service that returns IPv4
-      try {
-        const ipv4Response = await fetch('https://api.ipify.org?format=json', {
-          signal: AbortSignal.timeout(3000)
-        });
-        if (ipv4Response.ok) {
-          const ipv4Data = await ipv4Response.json();
-          ipv4 = ipv4Data.ip;
-          primaryIP = ipv4; // Use IPv4 as primary for better GeoIP data
-        }
-      } catch (err) {
-        console.log('Could not fetch IPv4:', err.message);
-      }
-    } else {
-      ipv4 = cfIP;
-      primaryIP = ipv4;
-    }
-
-    // Try to get detailed GeoIP info using PRIMARY IP (prefer IPv4)
+    // Try to get GeoIP info - use ip-api.com (best for both IPv4 and IPv6)
     try {
-      // Use ip-api.com - better support for both IPv4 and IPv6
       const geoResponse = await fetch(
-        `http://ip-api.com/json/${primaryIP}?fields=status,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
+        `http://ip-api.com/json/${ip}?fields=status,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`,
         {
           signal: AbortSignal.timeout(5000)
         }
@@ -67,10 +41,8 @@ export async function onRequestGet({ request }) {
         if (geoData.status === 'success') {
           return new Response(
             JSON.stringify({
-              ip: primaryIP,
-              ipv4: ipv4,
-              ipv6: ipv6,
-              type: isIPv6 ? 'IPv6' : 'IPv4',
+              ip: ip,
+              type: ipType,
               country: geoData.country || country,
               countryCode: geoData.countryCode || country,
               city: geoData.city || null,
@@ -92,14 +64,14 @@ export async function onRequestGet({ request }) {
           );
         }
       }
-    } catch (geoError) {
-      console.error('ip-api.com failed:', geoError);
+    } catch (err) {
+      console.log('ip-api.com failed, trying fallback...');
     }
 
-    // Fallback: Try ipwho.is
+    // Fallback 1: Try ipwho.is
     try {
       const whoResponse = await fetch(
-        `https://ipwho.is/${primaryIP}`,
+        `https://ipwho.is/${ip}`,
         {
           signal: AbortSignal.timeout(5000)
         }
@@ -111,10 +83,8 @@ export async function onRequestGet({ request }) {
         if (whoData.success) {
           return new Response(
             JSON.stringify({
-              ip: primaryIP,
-              ipv4: ipv4,
-              ipv6: ipv6,
-              type: isIPv6 ? 'IPv6' : 'IPv4',
+              ip: ip,
+              type: ipType,
               country: whoData.country || country,
               countryCode: whoData.country_code || country,
               city: whoData.city || null,
@@ -136,72 +106,27 @@ export async function onRequestGet({ request }) {
           );
         }
       }
-    } catch (whoError) {
-      console.error('ipwho.is failed:', whoError);
+    } catch (err) {
+      console.log('ipwho.is failed, trying last fallback...');
     }
 
-    // Last fallback: Try ipapi.co
-    try {
-      const ipapiResponse = await fetch(
-        `https://ipapi.co/${primaryIP}/json/`,
-        {
-          headers: { 'User-Agent': 'CheckTools/1.0' },
-          signal: AbortSignal.timeout(5000)
-        }
-      );
-
-      if (ipapiResponse.ok) {
-        const ipapiData = await ipapiResponse.json();
-        
-        if (!ipapiData.error) {
-          return new Response(
-            JSON.stringify({
-              ip: primaryIP,
-              ipv4: ipv4,
-              ipv6: ipv6,
-              type: isIPv6 ? 'IPv6' : 'IPv4',
-              country: ipapiData.country_name || country,
-              countryCode: ipapiData.country_code || country,
-              city: ipapiData.city || null,
-              region: ipapiData.region || null,
-              postal: ipapiData.postal || null,
-              timezone: ipapiData.timezone || null,
-              latitude: ipapiData.latitude || null,
-              longitude: ipapiData.longitude || null,
-              org: ipapiData.org || null,
-              isp: ipapiData.org || null,
-              userAgent: userAgent,
-              timestamp: new Date().toISOString(),
-              source: 'ipapi.co'
-            }),
-            { 
-              status: 200,
-              headers: corsHeaders
-            }
-          );
-        }
-      }
-    } catch (ipapiError) {
-      console.error('ipapi.co failed:', ipapiError);
-    }
-
-    // If all GeoIP APIs fail, return basic Cloudflare data
+    // Fallback 2: Return basic Cloudflare data (always works)
     return new Response(
       JSON.stringify({
-        ip: primaryIP,
-        ipv4: ipv4,
-        ipv6: ipv6,
-        type: isIPv6 ? 'IPv6' : 'IPv4',
+        ip: ip,
+        type: ipType,
         country: country,
         countryCode: country,
         city: request.headers.get('cf-ipcity') || null,
         region: request.headers.get('cf-region') || null,
         timezone: request.headers.get('cf-timezone') || null,
         postal: request.headers.get('cf-postal-code') || null,
+        isp: null,
+        org: null,
         userAgent: userAgent,
         timestamp: new Date().toISOString(),
         source: 'cloudflare-headers',
-        note: 'Using basic Cloudflare data (GeoIP APIs failed)'
+        note: 'Using basic Cloudflare data'
       }),
       { 
         status: 200,
@@ -210,10 +135,12 @@ export async function onRequestGet({ request }) {
     );
 
   } catch (err) {
+    // Return error response
     return new Response(
       JSON.stringify({ 
         error: err.message,
-        message: 'Không thể lấy thông tin IP'
+        message: 'Không thể lấy thông tin IP',
+        timestamp: new Date().toISOString()
       }),
       { 
         status: 500,
