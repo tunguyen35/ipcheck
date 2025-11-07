@@ -37,18 +37,6 @@
         <button id="copyBtn" class="btn-copy" onclick="copyIP()">📋 Sao chép</button>
       </div>
 
-      <!-- Both IPs (if available) -->
-      <div id="bothIPs" class="both-ips hidden">
-        <div class="ip-row">
-          <span class="ip-label-small">IPv4:</span>
-          <span id="ipv4Address" class="ip-value-small">-</span>
-        </div>
-        <div class="ip-row">
-          <span class="ip-label-small">IPv6:</span>
-          <span id="ipv6Address" class="ip-value-small">-</span>
-        </div>
-      </div>
-
       <!-- Info Grid -->
       <div class="info-grid">
         <div class="info-item">
@@ -84,6 +72,11 @@
         </div>
       </div>
 
+      <!-- Debug Info (optional) -->
+      <div id="debugInfo" class="debug-info hidden">
+        <small>Source: <span id="sourceAPI">-</span></small>
+      </div>
+
     </div>
 
     <!-- Error Section -->
@@ -103,19 +96,27 @@
     const errorSection = document.getElementById('errorSection');
     const ipAddress = document.getElementById('ipAddress');
     const ipType = document.getElementById('ipType');
-    const bothIPs = document.getElementById('bothIPs');
-    const ipv4Address = document.getElementById('ipv4Address');
-    const ipv6Address = document.getElementById('ipv6Address');
     const country = document.getElementById('country');
     const location = document.getElementById('location');
     const isp = document.getElementById('isp');
     const device = document.getElementById('device');
     const errorMessage = document.getElementById('errorMessage');
+    const debugInfo = document.getElementById('debugInfo');
+    const sourceAPI = document.getElementById('sourceAPI');
 
     async function getMyIP() {
       try {
+        console.log('Fetching IP info...');
+        
         const response = await fetch('/ip');
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
+        console.log('Data received:', data);
         
         if (data.error) {
           throw new Error(data.error);
@@ -123,6 +124,7 @@
 
         displayResult(data);
       } catch (error) {
+        console.error('Error:', error);
         showError(error.message);
       }
     }
@@ -138,26 +140,27 @@
       if (data.type) {
         ipType.textContent = data.type;
         ipType.className = 'ip-type-badge ' + (data.type === 'IPv4' ? 'ipv4' : 'ipv6');
+      } else {
+        ipType.style.display = 'none';
       }
 
-      // Show both IPs if available
-      if (data.ipv4 && data.ipv6) {
-        bothIPs.classList.remove('hidden');
-        ipv4Address.textContent = data.ipv4;
-        ipv6Address.textContent = data.ipv6;
-      } else if (data.ipv4 || data.ipv6) {
-        // Show only the one that's available
-        if (data.ipv4 && !data.ipv6) {
-          bothIPs.classList.add('hidden');
-        } else if (data.ipv6 && !data.ipv4) {
-          bothIPs.classList.add('hidden');
-        }
-      }
-
+      // Country with flag
       country.textContent = getCountryName(data.countryCode || data.country) || 'Không xác định';
+      
+      // Location (city + region)
       location.textContent = formatLocation(data) || 'Không xác định';
+      
+      // ISP
       isp.textContent = data.isp || data.org || 'Không xác định';
+      
+      // Device
       device.textContent = getDeviceInfo(data.userAgent) || 'Không xác định';
+
+      // Show source API for debugging
+      if (data.source) {
+        debugInfo.classList.remove('hidden');
+        sourceAPI.textContent = data.source;
+      }
     }
 
     function showError(message) {
@@ -216,11 +219,16 @@
         setTimeout(() => {
           btn.textContent = originalText;
         }, 2000);
+      }).catch(err => {
+        alert('Không thể sao chép: ' + err);
       });
     }
 
     // Auto load on page load
-    getMyIP();
+    window.addEventListener('DOMContentLoaded', () => {
+      console.log('Page loaded, fetching IP...');
+      getMyIP();
+    });
   </script>
 
   <style>
@@ -243,34 +251,13 @@
       color: white;
     }
 
-    .both-ips {
+    .debug-info {
+      margin-top: 1rem;
+      padding: 0.5rem;
       background: var(--bg-dark);
-      border-radius: 0.75rem;
-      padding: 1rem;
-      margin: 1rem 0;
-    }
-
-    .ip-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .ip-row:last-child {
-      border-bottom: none;
-    }
-
-    .ip-label-small {
-      color: var(--text-secondary);
-      font-weight: 500;
-    }
-
-    .ip-value-small {
-      color: var(--text-primary);
-      font-family: 'Courier New', monospace;
-      font-size: 0.9rem;
-      word-break: break-all;
+      border-radius: 0.5rem;
+      text-align: center;
+      color: var(--text-muted);
     }
   </style>
 </body>
