@@ -19,11 +19,12 @@ export async function onRequestGet({ request }) {
     }), { status: 400, headers: corsHeaders });
   }
 
+  // Làm sạch domain: loại bỏ protocol, path, query
   const cleanDomain = domain
     .replace(/^https?:\/\//, '')
-    .replace(/\/$/, '')
-    .split('/')[0];
+    .replace(/\/.*$/, ''); // Loại bỏ mọi thứ sau dấu /
 
+  // Regex kiểm tra domain cơ bản (không hỗ trợ IDN)
   const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?(\.[a-zA-Z]{2,})+$/;
   if (!domainRegex.test(cleanDomain)) {
     return new Response(JSON.stringify({
@@ -34,39 +35,44 @@ export async function onRequestGet({ request }) {
   }
 
   try {
-    // Step 1: Resolve domain to IP (IPv4 + IPv6)
+    // === BƯỚC 1: Tra cứu DNS IPv4 (A) và IPv6 (AAAA) ===
     const [dnsA, dnsAAAA] = await Promise.all([
-      fetch(`https://dns.google/resolve?name=${cleanDomain}&type=A`, {
+      fetch(`https://dns.google/resolve?name=${encodeURIComponent(cleanDomain)}&type=A`, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(5000)
       }).then(r => r.json()).catch(() => ({})),
-      fetch(`https://dns.google/resolve?name=${cleanDomain}&type=AAAA`, {
+      fetch(`https://dns.google/resolve?name=${encodeURIComponent(cleanDomain)}&type=AAAA`, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(5000)
       }).then(r => r.json()).catch(() => ({}))
     ]);
 
-    // lấy IPv4 trước, nếu không có thì dùng IPv6
-    const ipRecord = dnsA.Answer?.find(r => r.type === 1) || dnsAAAA.Answer?.find(r => r.type === 28);
+    // Ưu tiên IPv4, nếu không có thì dùng IPv6
+    let ipRecord = dnsA.Answer?.find(r => r.type === 1);
+    let version = 'IPv4';
+
+    if (!ipRecord) {
+      ipRecord = dnsAAAA.Answer?.find(r => r.type === 28);
+      version = 'IPv6';
+    }
+
     if (!ipRecord) {
       return new Response(JSON.stringify({
         error: 'No valid IP found',
-        message: 'Không tìm thấy địa chỉ IPv4 hoặc IPv6',
+        message: 'Không tìm thấy địa chỉ IPv4 hoặc IPv6 cho domain này',
         domain: cleanDomain
       }), { status: 404, headers: corsHeaders });
     }
 
     const ip = ipRecord.data;
-    const version = ip.includes(':') ? 'IPv6' : 'IPv4';
 
-    // Step 2: Try multiple GeoIP APIs with fallback
+    // === BƯỚC 2: Tra cứu GeoIP qua nhiều dịch vụ (có fallback) ===
 
-    // API 1: ip-api.com
+    // --- API 1: ip-api.com ---
     try {
-      const geoResponse = await fetch(
-        `http://ip-api.com/json/${ip}?fields=status,country,countryCode,region,regionName,city,zip,timezone,isp,org,as,query`,
-        { signal: AbortSignal.timeout(5000) }
-      );
+      // Thêm lat,lon vào fields
+      const geoUrl = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`;
+      const geoResponse = await fetch(geoUrl, { signal: AbortSignal.timeout(5000) });
 
       if (geoResponse.ok) {
         const geoData = await geoResponse.json();
@@ -84,18 +90,23 @@ export async function onRequestGet({ request }) {
             isp: geoData.isp || 'Unknown',
             org: geoData.org || geoData.as || null,
             asn: geoData.as || null,
+            latitude: geoData.lat || null,
+            longitude: geoData.lon || null,
             timestamp: new Date().toISOString(),
             source: 'ip-api.com'
           }), { status: 200, headers: corsHeaders });
         }
       }
     } catch (err) {
-      console.log('ip-api.com failed:', err.message);
+      console.error('ip-api.com failed:', err.message);
     }
 
-    // API 2: ipwho.is
+    // --- API 2: ipwho.is ---
     try {
-      const whoResponse = await fetch(`https://ipwho.is/${ip}`, { signal: AbortSignal.timeout(5000) });
+      const whoResponse = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
+        signal: AbortSignal.timeout(5000)
+      });
+
       if (whoResponse.ok) {
         const whoData = await whoResponse.json();
         if (whoData.success) {
@@ -120,19 +131,20 @@ export async function onRequestGet({ request }) {
         }
       }
     } catch (err) {
-      console.log('ipwho.is failed:', err.message);
+      console.error('ipwho.is failed:', err.message);
     }
 
-    // API 3: ipapi.co
+    // --- API 3: ipapi.co ---
     try {
-      const ipapiResponse = await fetch(`https://ipapi.co/${ip}/json/`, {
-        headers: { 'User-Agent': 'CheckTools/1.0' },
+      const ipapiResponse = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
+        headers: { 'User-Agent': 'DomainResolver/1.0' },
         signal: AbortSignal.timeout(5000)
       });
 
       if (ipapiResponse.ok) {
         const ipapiData = await ipapiResponse.json();
-        if (!ipapiData.error) {
+        // ipapi.co không trả "error" khi thành công. Nếu có lỗi, thường là HTTP error hoặc JSON chứa "error":true
+        if (!ipapiData.error && ipapiData.ip) {
           return new Response(JSON.stringify({
             domain: cleanDomain,
             ip: ip,
@@ -154,10 +166,10 @@ export async function onRequestGet({ request }) {
         }
       }
     } catch (err) {
-      console.log('ipapi.co failed:', err.message);
+      console.error('ipapi.co failed:', err.message);
     }
 
-    // Fallback
+    // === FALLBACK: có IP nhưng không tra được GeoIP ===
     return new Response(JSON.stringify({
       domain: cleanDomain,
       ip: ip,
@@ -166,19 +178,20 @@ export async function onRequestGet({ request }) {
       region: 'Unknown',
       city: 'Unknown',
       isp: 'Unknown',
-      message: 'Tất cả GeoIP APIs đều thất bại',
+      message: 'Đã tìm thấy IP, nhưng không thể tra thông tin địa lý (GeoIP).',
       timestamp: new Date().toISOString()
     }), { status: 200, headers: corsHeaders });
 
   } catch (err) {
     return new Response(JSON.stringify({
-      error: err.message,
+      error: err.message || 'Unknown error',
       message: 'Không thể tra cứu domain',
       domain: domain
     }), { status: 500, headers: corsHeaders });
   }
 }
 
+// Xử lý CORS preflight
 export async function onRequestOptions() {
   return new Response(null, {
     headers: {
