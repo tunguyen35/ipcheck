@@ -1,81 +1,35 @@
-// API: /ip
+// ip.txt — API: GET /ip
 export async function onRequest(context) {
   const { request } = context;
-  
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json'
-  };
+  const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
+  const userAgent = request.headers.get('User-Agent') || '';
+  const country = request.cf?.country || 'N/A';
+  const region = request.cf?.region || '';
+  const city = request.cf?.city || '';
+  const postal = request.cf?.postalCode || '';
+  const timezone = request.cf?.timezone || '';
+  // Ghi chú: Cloudflare Workers miễn phí KHÔNG cung cấp ISP/org trực tiếp
+  // Bạn có thể tích hợp IPinfo/Ipapi nếu cần org/ISP
 
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  try {
-    const ip = request.headers.get('cf-connecting-ip') || 
-                request.headers.get('x-forwarded-for') || 
-                request.headers.get('x-real-ip') || 
-                'Unknown';
-
-    const country = request.headers.get('cf-ipcountry') || 'Unknown';
-    const userAgent = request.headers.get('user-agent') || 'Unknown';
-
-    try {
-      if (ip && ip !== 'Unknown') {
-        const geoResponse = await fetch(`https://ipapi.co/${ip}/json/`, {
-          headers: { 'User-Agent': 'CheckTools/1.0' },
-          signal: AbortSignal.timeout(3000)
-        });
-
-        if (geoResponse.ok) {
-          const geoData = await geoResponse.json();
-          
-          return new Response(
-            JSON.stringify({
-              ip: ip,
-              country: geoData.country_name || country,
-              countryCode: geoData.country_code || country,
-              city: geoData.city || null,
-              region: geoData.region || null,
-              timezone: geoData.timezone || null,
-              postal: geoData.postal || null,
-              org: geoData.org || null,
-              isp: geoData.org || null,
-              userAgent: userAgent,
-              timestamp: new Date().toISOString()
-            }),
-            { status: 200, headers: corsHeaders }
-          );
-        }
+  return new Response(
+    JSON.stringify({
+      ip: ip,
+      country: country,
+      countryCode: country,
+      region: region,
+      city: city,
+      postal: postal,
+      timezone: timezone,
+      userAgent: userAgent,
+      // org/isp không có trong CF miễn phí → để trống hoặc dùng service khác
+    }),
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type'
       }
-    } catch (geoError) {
-      console.error('GeoIP lookup failed:', geoError);
     }
-
-    return new Response(
-      JSON.stringify({
-        ip: ip,
-        country: country,
-        countryCode: country,
-        city: null,
-        region: null,
-        timezone: null,
-        postal: null,
-        userAgent: userAgent,
-        timestamp: new Date().toISOString()
-      }),
-      { status: 200, headers: corsHeaders }
-    );
-
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ 
-        error: err.message,
-        message: 'Cannot get IP information'
-      }),
-      { status: 500, headers: corsHeaders }
-    );
-  }
+  );
 }
