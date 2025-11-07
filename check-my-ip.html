@@ -33,7 +33,6 @@
       <div class="ip-display">
         <div class="ip-label">Địa chỉ IP của bạn</div>
         <div id="ipAddress" class="ip-value">-</div>
-        <div id="ipType" class="ip-type-badge">-</div>
         <button id="copyBtn" class="btn-copy" onclick="copyIP()">📋 Sao chép</button>
       </div>
 
@@ -72,11 +71,6 @@
         </div>
       </div>
 
-      <!-- Debug Info (optional) -->
-      <div id="debugInfo" class="debug-info hidden">
-        <small>Source: <span id="sourceAPI">-</span></small>
-      </div>
-
     </div>
 
     <!-- Error Section -->
@@ -95,28 +89,16 @@
     const resultSection = document.getElementById('resultSection');
     const errorSection = document.getElementById('errorSection');
     const ipAddress = document.getElementById('ipAddress');
-    const ipType = document.getElementById('ipType');
     const country = document.getElementById('country');
     const location = document.getElementById('location');
     const isp = document.getElementById('isp');
     const device = document.getElementById('device');
     const errorMessage = document.getElementById('errorMessage');
-    const debugInfo = document.getElementById('debugInfo');
-    const sourceAPI = document.getElementById('sourceAPI');
 
     async function getMyIP() {
       try {
-        console.log('Fetching IP info...');
-        
         const response = await fetch('/ip');
-        console.log('Response status:', response.status);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
         const data = await response.json();
-        console.log('Data received:', data);
         
         if (data.error) {
           throw new Error(data.error);
@@ -124,7 +106,6 @@
 
         displayResult(data);
       } catch (error) {
-        console.error('Error:', error);
         showError(error.message);
       }
     }
@@ -133,34 +114,11 @@
       loadingBox.classList.add('hidden');
       resultSection.classList.remove('hidden');
 
-      // Main IP display
       ipAddress.textContent = data.ip || 'Không xác định';
-      
-      // IP Type badge
-      if (data.type) {
-        ipType.textContent = data.type;
-        ipType.className = 'ip-type-badge ' + (data.type === 'IPv4' ? 'ipv4' : 'ipv6');
-      } else {
-        ipType.style.display = 'none';
-      }
-
-      // Country with flag
-      country.textContent = getCountryName(data.countryCode || data.country) || 'Không xác định';
-      
-      // Location (city + region)
+      country.textContent = getCountryName(data.country) || 'Không xác định';
       location.textContent = formatLocation(data) || 'Không xác định';
-      
-      // ISP
-      isp.textContent = data.isp || data.org || 'Không xác định';
-      
-      // Device
+      isp.textContent = data.org || data.isp || 'Không xác định';
       device.textContent = getDeviceInfo(data.userAgent) || 'Không xác định';
-
-      // Show source API for debugging
-      if (data.source) {
-        debugInfo.classList.remove('hidden');
-        sourceAPI.textContent = data.source;
-      }
     }
 
     function showError(message) {
@@ -179,12 +137,8 @@
         'CN': '🇨🇳 China',
         'SG': '🇸🇬 Singapore',
         'TH': '🇹🇭 Thailand',
-        'FR': '🇫🇷 France',
-        'DE': '🇩🇪 Germany',
-        'AU': '🇦🇺 Australia',
-        'CA': '🇨🇦 Canada',
       };
-      return countries[code] || (code === 'Unknown' ? code : `${code}`);
+      return countries[code] || code;
     }
 
     function formatLocation(data) {
@@ -219,46 +173,11 @@
         setTimeout(() => {
           btn.textContent = originalText;
         }, 2000);
-      }).catch(err => {
-        alert('Không thể sao chép: ' + err);
       });
     }
 
     // Auto load on page load
-    window.addEventListener('DOMContentLoaded', () => {
-      console.log('Page loaded, fetching IP...');
-      getMyIP();
-    });
+    getMyIP();
   </script>
-
-  <style>
-    .ip-type-badge {
-      display: inline-block;
-      padding: 0.25rem 0.75rem;
-      border-radius: 1rem;
-      font-size: 0.85rem;
-      font-weight: 600;
-      margin-top: 0.5rem;
-    }
-
-    .ip-type-badge.ipv4 {
-      background: #10b981;
-      color: white;
-    }
-
-    .ip-type-badge.ipv6 {
-      background: #3b82f6;
-      color: white;
-    }
-
-    .debug-info {
-      margin-top: 1rem;
-      padding: 0.5rem;
-      background: var(--bg-dark);
-      border-radius: 0.5rem;
-      text-align: center;
-      color: var(--text-muted);
-    }
-  </style>
 </body>
 </html>
